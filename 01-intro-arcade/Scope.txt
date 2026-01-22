@@ -1,0 +1,4 @@
+I wanted to change the difficulty of the game without changing the core loop.
+I talked withh one of my roomates and he said thhe difficulty change was not 
+as visible to him in the original. I thought adding more enemies would allow
+the player to have a more visual representation of the difficulty increase.
