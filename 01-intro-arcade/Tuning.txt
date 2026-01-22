@@ -1,0 +1,46 @@
+Overview
+Redesigned difficulty progression from speed-based to quantity-based enemy scaling.
+
+Changes Made
+Enemy Size Reduction
+
+Previous: 36×36 pixels
+New: 24×24 pixels
+Rationale: Smaller enemies allow for more on-screen without overwhelming visual clutter. Makes individual enemies less threatening, compensating for increased numbers.
+
+Starting Enemy Count
+
+Previous: 3 enemies
+New: 2 enemies
+Rationale: Lower starting difficulty provides gentler learning curve. Players can learn movement mechanics before facing dense enemy patterns.
+
+Enemy Speed
+
+Previous: Fixed at spawn
+
+Horizontal: ±220 pixels/second
+Vertical: ±180 pixels/second
+
+
+New: Consistent ranges (no speed increase over time)
+
+Horizontal: 180-220 pixels/second (random)
+Vertical: 150-190 pixels/second (random)
+
+
+Rationale: Maintaining consistent speeds makes enemy behavior predictable. Difficulty comes from numbers and spatial awareness, not reaction time.
+Progressive Spawning System
+
+Previous: No additional enemies spawned
+New: Time-based spawning
+
+First spawn: 5 seconds after game start
+Spawn interval: 5 seconds (initial) → 3 seconds (minimum)
+Formula: max(3.0, 5.0 - (alive_time / 30.0))
+
+
+Rationale:
+5-second initial delay gives breathing room
+Gradual acceleration (30 seconds to reach minimum) creates smooth difficulty curve
+3-second minimum prevents spawn spam while maintaining pressure
+Unlimited enemy count creates natural difficulty ceiling
