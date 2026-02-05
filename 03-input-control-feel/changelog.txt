@@ -1,0 +1,98 @@
+Added presets
+increased number of presets to 5
+
+python
+
+self.presets = [
+            FeelPreset(
+                name="tight",
+                accel=3200.0,
+                max_speed=520.0,
+                friction=14.0,
+                gravity=2600.0,
+                jump_speed=860.0,
+            ),
+            FeelPreset(
+                name="floaty",
+                accel=1900.0,
+                max_speed=560.0,
+                friction=6.0,
+                gravity=1700.0,
+                jump_speed=760.0,
+            ),
+            FeelPreset(
+                name="heavy",
+                accel=1400.0,
+                max_speed=440.0,
+                friction=4.2,
+                gravity=3200.0,
+                jump_speed=820.0,
+            ),
+            #new presets
+            #fast but slippery
+            FeelPreset(
+                name="slick",
+                accel=5200.0, #quick acceleration
+                max_speed=900.0, #high top speed
+                friction=2.0,  #slides a lot
+                gravity=2600.0,
+                jump_speed=880.0,
+            ),
+            #low gravity extreme float
+            FeelPreset(
+                name="moon",
+                accel=1400.0,
+                max_speed=480.0,
+                friction=4.0,
+                gravity=600.0,  # super low gravity
+                jump_speed=1200.0,  # huge jumps
+            )
+        ]
+Added double jump
+added variable jumps_left set to 2
+
+original jump logic:
+Python
+
+if self.jump_requested and self.on_ground:
+    self.player_vel.y = -p.jump_speed
+    self.on_ground = False
+
+new jump logic:
+Python
+if self.jump_requested and self.jumps_left > 0:
+    self.player_vel.y = -p.jump_speed
+    self.on_ground = False
+    self.jumps_left -= 1
+
+Issue
+Holding the jump button caused jumps_left to deplete to zero instantly because the game registered a jump on every frame.
+
+The Solution
+Introduced a should_jump flag to gate the jump trigger. This allows the player to either:
+
+Press to jump normally.
+
+Hold to automatically trigger the double-jump only once the character begins to fall (y velocity > 0).
+
+Code Update
+Before:
+
+Python
+if self.jump_requested and self.jumps_left > 0:
+    self.player_vel.y = -p.jump_speed
+    self.on_ground = False
+    self.jumps_left -= 1
+After:
+
+Python
+should_jump = self.jump_requested or (self.jump_held and self.player_vel.y > 0)
+
+if should_jump and self.jumps_left > 0:
+    self.player_vel.y = -p.jump_speed
+    self.on_ground = False
+    self.jumps_left -= 1
+    self.jump_requested = False
+
+self.jump_requested = False
+
