@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import array
+import math
 import random
 
 import pygame
@@ -60,6 +62,23 @@ class Particle:
     def update(self, dt: float) -> None:
         self.life = max(0.0, self.life - dt)
         self.pos += self.vel * dt
+
+    @property
+    def alive(self) -> bool:
+        return self.life > 0
+
+
+@dataclass
+class TextPopup:
+    text: str
+    pos: pygame.Vector2
+    color: pygame.Color
+    life: float
+    ttl: float
+
+    def update(self, dt: float) -> None:
+        self.life = max(0.0, self.life - dt)
+        self.pos.y -= 40 * dt  # float upward
 
     @property
     def alive(self) -> bool:
@@ -168,7 +187,7 @@ class Player(pygame.sprite.Sprite):
 
 
 class Game:
-    fps = 60
+    fps = 30
 
     SCREEN_W, SCREEN_H = 960, 540
     HUD_H = 56
@@ -176,6 +195,11 @@ class Game:
 
     def __init__(self) -> None:
         self.palette = Palette()
+
+        pygame.mixer.init(frequency=44100, size=-16, channels=1, buffer=512)
+        self._snd_coin = _make_beep(frequency=880, duration=0.07, volume=0.4)
+        self._snd_hit  = _make_beep(frequency=180, duration=0.12, volume=0.5)
+        self._snd_dead = _make_beep(frequency=110, duration=0.35, volume=0.6)
 
         self.screen = pygame.display.set_mode((self.SCREEN_W, self.SCREEN_H))
         self.font = pygame.font.SysFont(None, 22)
@@ -196,6 +220,8 @@ class Game:
         self.cue_shake = True
         self.cue_hitstop = True
         self.cue_particles = True
+        self.cue_popup = True
+        self.cue_sound = True
 
         self.rng = random.Random(5)
 
@@ -208,6 +234,7 @@ class Game:
         self.all_sprites.add(self.player)
 
         self.particles: list[Particle] = []
+        self.popups: list[TextPopup] = []
 
         self._shake_for = 0.0
         self._hitstop_for = 0.0
@@ -220,6 +247,7 @@ class Game:
         self.coins.empty()
         self.hazards.empty()
         self.particles.clear()
+        self.popups = []
 
         self.player = Player(self.playfield.center, color=self.palette.player)
         self.all_sprites.add(self.player)
@@ -296,6 +324,14 @@ class Game:
             self.cue_particles = not self.cue_particles
             return
 
+        if event.key == pygame.K_5:
+            self.cue_popup = not self.cue_popup
+            return
+
+        if event.key == pygame.K_6:
+            self.cue_sound = not self.cue_sound
+            return
+
         if self.state in {"title", "gameover"} and event.key == pygame.K_SPACE:
             self._reset_level(keep_state=True)
             self.state = "play"
@@ -361,25 +397,33 @@ class Game:
             )
             self.particles.append(p)
 
+    def _spawn_popup(self, text: str, center: tuple[int, int], *, color: pygame.Color) -> None:
+        pos = pygame.Vector2(center[0] - 16, center[1] - 20)
+        self.popups.append(TextPopup(text=text, pos=pos, color=color, life=0.75, ttl=0.75))
+
     def _cue_coin(self, coin_rect: pygame.Rect) -> None:
         if self.cue_shake:
             self._shake_for = max(self._shake_for, 0.10)
-
         if self.cue_particles:
             self._spawn_particles(coin_rect.center, color=self.palette.particle, count=18)
+        if self.cue_popup:
+            self._spawn_popup("+1", coin_rect.center, color=self.palette.coin)
+        if self.cue_sound:
+            self._snd_coin.play()
 
     def _cue_hit(self, source_rect: pygame.Rect) -> None:
         if self.cue_flash:
             self.player.flash_for = 0.18
-
         if self.cue_hitstop:
             self._hitstop_for = max(self._hitstop_for, 0.06)
-
         if self.cue_shake:
             self._shake_for = max(self._shake_for, 0.18)
-
         if self.cue_particles:
             self._spawn_particles(self.player.rect.center, color=self.palette.hazard, count=26)
+        if self.cue_popup:
+            self._spawn_popup("OUCH!", self.player.rect.midtop, color=self.palette.hazard)
+        if self.cue_sound:
+            self._snd_hit.play()
 
     def _apply_damage(self, source_rect: pygame.Rect) -> None:
         if self.player.is_invincible:
@@ -398,6 +442,10 @@ class Game:
 
         if self.player.hp <= 0:
             self.state = "gameover"
+            if self.cue_popup:
+                self._spawn_popup("i'm dead", self.player.rect.midtop, color=self.palette.text)
+            if self.cue_sound:
+                self._snd_dead.play()
 
     def update(self, dt: float) -> None:
         if self._shake_for > 0:
@@ -410,6 +458,10 @@ class Game:
         for p in list(self.particles):
             p.update(dt)
         self.particles = [p for p in self.particles if p.alive]
+
+        for pop in list(self.popups):
+            pop.update(dt)
+        self.popups = [pop for pop in self.popups if pop.alive]
 
         if self.state != "play":
             return
@@ -459,7 +511,14 @@ class Game:
         hud_rect = pygame.Rect(0, 0, self.SCREEN_W, self.HUD_H)
         pygame.draw.rect(self.screen, self.palette.panel, hud_rect)
 
-        cues = f"Cues: [1]flash={'on' if self.cue_flash else 'off'}  [2]shake={'on' if self.cue_shake else 'off'}  [3]hitstop={'on' if self.cue_hitstop else 'off'}  [4]particles={'on' if self.cue_particles else 'off'}"
+        cues = (
+            f"Cues: [1]flash={'on' if self.cue_flash else 'off'}"
+            f"  [2]shake={'on' if self.cue_shake else 'off'}"
+            f"  [3]hitstop={'on' if self.cue_hitstop else 'off'}"
+            f"  [4]particles={'on' if self.cue_particles else 'off'}"
+            f"  [5]popup={'on' if self.cue_popup else 'off'}"
+            f"  [6]sound={'on' if self.cue_sound else 'off'}"
+        )
         self._draw_text(f"HP {self.player.hp}   Score {self.player.score}", (12, 10), self.palette.text)
         self._draw_text(cues, (12, 32), self.palette.subtle)
 
@@ -490,6 +549,14 @@ class Game:
             surf = pygame.Surface((radius * 2 + 2, radius * 2 + 2), pygame.SRCALPHA)
             pygame.draw.circle(surf, col, (radius + 1, radius + 1), radius)
             self.screen.blit(surf, (p.pos.x - radius + cam[0], p.pos.y - radius + cam[1]))
+
+        for pop in self.popups:
+            a = _clamp(pop.life / pop.ttl, 0.0, 1.0)
+            col = pygame.Color(pop.color)
+            col.a = int(255 * a)
+            surf = self.font.render(pop.text, True, col)
+            surf.set_alpha(int(255 * a))
+            self.screen.blit(surf, (int(pop.pos.x) + cam[0], int(pop.pos.y) + cam[1]))
 
         if self.debug:
             pygame.draw.rect(self.screen, pygame.Color("#d08770"), self.player.rect.move(cam), 2)
@@ -574,42 +641,66 @@ def _make_player_anims(color: pygame.Color) -> dict[str, Animation]:
 
 
 def _draw_player_frame(color: pygame.Color, *, leg_phase: int, eye_open: bool) -> pygame.Surface:
-    w, h = 44, 44
+    # Larger canvas so arms and legs are never clipped
+    w, h = 56, 60
     surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    cx = w // 2
 
-    # Body
-    body = pygame.Rect(0, 0, 24, 26)
-    body.center = (w // 2, h // 2 + 4)
-    pygame.draw.rect(surf, color, body, border_radius=8)
-    pygame.draw.rect(surf, pygame.Color("#000000"), body, 2, border_radius=8)
+    # Body — centred slightly above the middle to leave room for legs below
+    body = pygame.Rect(0, 0, 24, 22)
+    body.center = (cx, 32)
+    pygame.draw.rect(surf, color, body, border_radius=7)
+    pygame.draw.rect(surf, pygame.Color("#000000"), body, 2, border_radius=7)
 
     # Head
-    head_center = (w // 2, h // 2 - 10)
+    head_center = (cx, 14)
     pygame.draw.circle(surf, color, head_center, 10)
     pygame.draw.circle(surf, pygame.Color("#000000"), head_center, 10, 2)
 
     # Eyes
     eye = pygame.Color("#2e3440")
     if eye_open:
-        pygame.draw.circle(surf, eye, (head_center[0] - 3, head_center[1] - 1), 2)
-        pygame.draw.circle(surf, eye, (head_center[0] + 3, head_center[1] - 1), 2)
+        pygame.draw.circle(surf, eye, (head_center[0] - 3, head_center[1]), 2)
+        pygame.draw.circle(surf, eye, (head_center[0] + 3, head_center[1]), 2)
     else:
-        pygame.draw.line(surf, eye, (head_center[0] - 5, head_center[1] - 1), (head_center[0] - 1, head_center[1] - 1), 2)
-        pygame.draw.line(surf, eye, (head_center[0] + 1, head_center[1] - 1), (head_center[0] + 5, head_center[1] - 1), 2)
+        pygame.draw.line(surf, eye, (head_center[0] - 5, head_center[1]), (head_center[0] - 1, head_center[1]), 2)
+        pygame.draw.line(surf, eye, (head_center[0] + 1, head_center[1]), (head_center[0] + 5, head_center[1]), 2)
 
-    # Legs (simple alternating phase)
-    leg_y = body.bottom + 2
-    dx = 6
+    # Arms — drawn from body sides, swinging with leg_phase
     phase = leg_phase % 4
-    left_off = (-dx, 4) if phase in {0, 3} else (-dx, 1)
-    right_off = (dx, 4) if phase in {1, 2} else (dx, 1)
+    arm_y = body.top + 8
+    left_arm_swing  =  5 if phase in {0, 3} else -5
+    right_arm_swing = -5 if phase in {0, 3} else  5
+    pygame.draw.line(surf, pygame.Color("#2e3440"),
+                     (body.left + 2, arm_y),
+                     (body.left - 8, arm_y + left_arm_swing), 4)
+    pygame.draw.line(surf, pygame.Color("#2e3440"),
+                     (body.right - 2, arm_y),
+                     (body.right + 8, arm_y + right_arm_swing), 4)
 
-    pygame.draw.line(surf, pygame.Color("#2e3440"), (w // 2 - 6, leg_y), (w // 2 - 6 + left_off[0] // 3, leg_y + left_off[1]), 4)
-    pygame.draw.line(surf, pygame.Color("#2e3440"), (w // 2 + 6, leg_y), (w // 2 + 6 + right_off[0] // 3, leg_y + right_off[1]), 4)
-
-    # Arms
-    arm_y = body.top + 10
-    pygame.draw.line(surf, pygame.Color("#2e3440"), (body.left + 3, arm_y), (body.left - 6, arm_y + 3), 4)
-    pygame.draw.line(surf, pygame.Color("#2e3440"), (body.right - 3, arm_y), (body.right + 6, arm_y + 3), 4)
+    # Legs — alternate up/down per phase, well within the canvas
+    leg_top = body.bottom + 1
+    left_down  = phase in {0, 3}
+    right_down = phase in {1, 2}
+    pygame.draw.line(surf, pygame.Color("#2e3440"),
+                     (cx - 6, leg_top),
+                     (cx - 8, leg_top + (10 if left_down else 6)), 4)
+    pygame.draw.line(surf, pygame.Color("#2e3440"),
+                     (cx + 6, leg_top),
+                     (cx + 8, leg_top + (10 if right_down else 6)), 4)
 
     return surf
+
+
+def _make_beep(*, frequency: float, duration: float, volume: float = 0.5) -> pygame.mixer.Sound:
+    """Synthesize a simple sine-wave beep using stdlib only (no numpy)."""
+    sample_rate = 44100
+    n_samples = int(sample_rate * duration)
+    buf = array.array("h", [0] * n_samples)
+    peak = int(32767 * volume)
+    for i in range(n_samples):
+        t = i / sample_rate
+        fade = 1.0 - (i / n_samples)          # linear fade-out
+        buf[i] = int(peak * math.sin(2 * math.pi * frequency * t) * fade)
+    sound = pygame.mixer.Sound(buffer=buf)
+    return sound
